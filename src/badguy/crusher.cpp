@@ -29,12 +29,15 @@
 #include "object/particles.hpp"
 #include "object/player.hpp"
 #include "object/rock.hpp"
+#include "object/bumper.hpp"
 #include "sprite/sprite.hpp"
 #include "sprite/sprite_manager.hpp"
 #include "supertux/flip_level_transformer.hpp"
 #include "supertux/sector.hpp"
 #include "util/log.hpp"
 #include "util/reader_mapping.hpp"
+
+static float FORGIVENESS = 0.005f;
 
 namespace {
   /* Maximum movement speed in pixels per LOGICAL_FPS. */
@@ -129,21 +132,53 @@ Crusher::collision(MovingObject& other, const CollisionHit& hit)
      (hit.right && m_physic.get_velocity_x() > 0.f));
   bool is_crushing = crushed_bottom || crushed_sideways;
 
-  // If the other object is the player, and the collision is at the
-  // bottom of the crusher, hurt the player.
-  if (player && is_crushing &&
-    ((crushed_bottom && player->on_ground()) || crushed_sideways))
+  if (player)
   {
-    SoundManager::current()->play("sounds/brick.wav", get_pos());
-    set_state(RECOVERING);
+    float crusher_x = get_pos().x;
+    float player_x = player->get_pos().x;
 
-    if (player->is_invincible()) {
-      return ABORT_MOVE;
+    // If the other object is the player, and there is a bumper
+    // between the player and the crusher, ignore collision
+    for (Bumper& mid_bumper: Sector::get().get_objects_by_type<Bumper>()) {
+
+      if ((crusher_x < player_x &&
+          (((mid_bumper.get_collision_object()->get_bbox().get_left() - m_col.m_bbox.get_right()) <= FORGIVENESS) &&
+           ((mid_bumper.get_collision_object()->get_bbox().get_left() - m_col.m_bbox.get_right()) >= 0))) ||
+          (crusher_x > player_x &&
+          (((m_col.m_bbox.get_left() - mid_bumper.get_collision_object()->get_bbox().get_right()) <= FORGIVENESS) &&
+           ((m_col.m_bbox.get_left() - mid_bumper.get_collision_object()->get_bbox().get_right()) >= 0))))
+      {
+        if ((player->get_collision_object()->get_bbox().get_bottom() < mid_bumper.get_collision_object()->get_bbox().get_top()) ||
+            (player->get_collision_object()->get_bbox().get_top() > mid_bumper.get_collision_object()->get_bbox().get_bottom()))
+        {
+          if (hit.bottom || hit.top)
+          {
+            return CONTINUE;
+          }
+          player->kill(false);
+          return FORCE_MOVE;
+        }
+
+        return ABORT_MOVE;
+      }
     }
+  
+    // If the other object is the player, and the collision is at the
+    // bottom of the crusher, hurt the player.
+    if (player && is_crushing &&
+      ((crushed_bottom && player->on_ground()) || crushed_sideways))
+    {
+      SoundManager::current()->play("sounds/brick.wav", get_pos());
+      set_state(RECOVERING);
 
-    player->kill(false);
+      if (player->is_invincible()) {
+        return ABORT_MOVE;
+      }
 
-    return FORCE_MOVE;
+      player->kill(false);
+
+      return FORCE_MOVE;
+    }
   }
 
   auto* badguy = dynamic_cast<BadGuy*>(&other);
